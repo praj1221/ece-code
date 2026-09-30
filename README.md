@@ -3,22 +3,23 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
-unsigned short checksum(unsigned short *data, int length)
+unsigned short checksum(unsigned short *buf, int len)
 {
     unsigned int sum = 0;
 
-    while (length > 1)
+    while (len > 1)
     {
-        sum += *data++;
-        length -= 2;
+        sum += *buf++;
+        len -= 2;
     }
 
-    if (length == 1)
-        sum += *(unsigned char *)data;
+    if (len == 1)
+        sum += *(unsigned char *)buf;
 
     sum = (sum >> 16) + (sum & 0xffff);
     sum += (sum >> 16);
@@ -34,9 +35,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int sockfd;
-
-    sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 
     if (sockfd < 0)
     {
@@ -44,90 +43,65 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    struct sockaddr_in destination;
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
 
-    memset(&destination, 0, sizeof(destination));
+    dest.sin_family = AF_INET;
 
-    destination.sin_family = AF_INET;
-
-    if (inet_pton(AF_INET, argv[1],
-                  &destination.sin_addr) <= 0)
-    {
-        printf("Invalid IP address\n");
-        return 1;
-    }
+    inet_pton(AF_INET, argv[1], &dest.sin_addr);
 
     char packet[64];
-
     memset(packet, 0, sizeof(packet));
 
-    struct icmphdr *icmp =
-        (struct icmphdr *)packet;
+    struct icmphdr *icmp = (struct icmphdr *)packet;
 
     icmp->type = ICMP_ECHO;
     icmp->code = 0;
-
     icmp->un.echo.id = getpid();
     icmp->un.echo.sequence = 1;
 
-    icmp->checksum = 0;
-
-    icmp->checksum =
-        checksum((unsigned short *)packet,
-                 sizeof(packet));
+    icmp->checksum = checksum(
+        (unsigned short *)packet,
+        sizeof(packet)
+    );
 
     struct timeval start, end;
 
     gettimeofday(&start, NULL);
 
-    sendto(sockfd,
-           packet,
-           sizeof(packet),
-           0,
-           (struct sockaddr *)&destination,
-           sizeof(destination));
+    sendto(
+        sockfd,
+        packet,
+        sizeof(packet),
+        0,
+        (struct sockaddr *)&dest,
+        sizeof(dest)
+    );
 
     printf("PING %s\n", argv[1]);
 
     char buffer[1024];
 
-    struct sockaddr_in reply_address;
+    struct sockaddr_in reply;
+    socklen_t len = sizeof(reply);
 
-    socklen_t address_length =
-        sizeof(reply_address);
-
-    int bytes;
-
-    while (1)
-    {
-        bytes = recvfrom(sockfd,
-                         buffer,
-                         sizeof(buffer),
-                         0,
-                         (struct sockaddr *)&reply_address,
-                         &address_length);
-
-        if (bytes < 0)
-        {
-            perror("recvfrom");
-            close(sockfd);
-            return 1;
-        }
-
-        struct iphdr *ip =
-            (struct iphdr *)buffer;
-
-        struct icmphdr *reply =
-            (struct icmphdr *)(buffer +
-                               ip->ihl * 4);
-
-        if (reply->type == ICMP_ECHOREPLY)
-        {
-            break;
-        }
-    }
+    int bytes = recvfrom(
+        sockfd,
+        buffer,
+        sizeof(buffer),
+        0,
+        (struct sockaddr *)&reply,
+        &len
+    );
 
     gettimeofday(&end, NULL);
+
+    if (bytes < 0)
+    {
+        perror("recvfrom");
+        close(sockfd);
+        return 1;
+    }
 
     double time_ms =
         (end.tv_sec - start.tv_sec) * 1000.0 +
@@ -135,8 +109,11 @@ int main(int argc, char *argv[])
 
     printf("%d bytes received\n", bytes);
 
-    printf("Reply from %s: time=%.3f ms\n",
-           argv[1], time_ms);
+    printf(
+        "Reply from %s: time=%.3f ms\n",
+        argv[1],
+        time_ms
+    );
 
     close(sockfd);
 
