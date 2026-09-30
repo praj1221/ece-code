@@ -7,19 +7,19 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
-unsigned short checksum(void *buffer, int length)
+unsigned short checksum(void *data, int length)
 {
-    unsigned short *data = buffer;
+    unsigned short *ptr = data;
     unsigned int sum = 0;
 
     while (length > 1)
     {
-        sum += *data++;
+        sum += *ptr++;
         length -= 2;
     }
 
     if (length == 1)
-        sum += *(unsigned char *)data;
+        sum += *(unsigned char *)ptr;
 
     sum = (sum >> 16) + (sum & 0xffff);
     sum += (sum >> 16);
@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 2)
     {
-        printf("Usage: sudo %s <IP>\n", argv[0]);
+        printf("Usage: sudo %s <IP address>\n", argv[0]);
         return 1;
     }
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
 
     if (sockfd < 0)
     {
-        perror("Socket creation failed");
+        perror("socket");
         return 1;
     }
 
@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
 
     if (bytes < 0)
     {
-        perror("Receive failed");
+        perror("recvfrom");
         close(sockfd);
         return 1;
     }
