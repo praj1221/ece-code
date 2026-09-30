@@ -7,19 +7,18 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
-unsigned short checksum(void *data, int length)
+unsigned short checksum(unsigned short *data, int length)
 {
-    unsigned short *ptr = data;
     unsigned int sum = 0;
 
     while (length > 1)
     {
-        sum += *ptr++;
+        sum += *data++;
         length -= 2;
     }
 
     if (length == 1)
-        sum += *(unsigned char *)ptr;
+        sum += *(unsigned char *)data;
 
     sum = (sum >> 16) + (sum & 0xffff);
     sum += (sum >> 16);
@@ -31,7 +30,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 2)
     {
-        printf("Usage: sudo %s <IP address>\n", argv[0]);
+        printf("Usage: sudo %s <IP>\n", argv[0]);
         return 1;
     }
 
@@ -74,7 +73,8 @@ int main(int argc, char *argv[])
     icmp->checksum = 0;
 
     icmp->checksum =
-        checksum(packet, sizeof(packet));
+        checksum((unsigned short *)packet,
+                 sizeof(packet));
 
     struct timeval start, end;
 
@@ -91,21 +91,40 @@ int main(int argc, char *argv[])
 
     char buffer[1024];
 
-    socklen_t address_length =
-        sizeof(destination);
+    struct sockaddr_in reply_address;
 
-    int bytes = recvfrom(sockfd,
+    socklen_t address_length =
+        sizeof(reply_address);
+
+    int bytes;
+
+    while (1)
+    {
+        bytes = recvfrom(sockfd,
                          buffer,
                          sizeof(buffer),
                          0,
-                         (struct sockaddr *)&destination,
+                         (struct sockaddr *)&reply_address,
                          &address_length);
 
-    if (bytes < 0)
-    {
-        perror("recvfrom");
-        close(sockfd);
-        return 1;
+        if (bytes < 0)
+        {
+            perror("recvfrom");
+            close(sockfd);
+            return 1;
+        }
+
+        struct iphdr *ip =
+            (struct iphdr *)buffer;
+
+        struct icmphdr *reply =
+            (struct icmphdr *)(buffer +
+                               ip->ihl * 4);
+
+        if (reply->type == ICMP_ECHOREPLY)
+        {
+            break;
+        }
     }
 
     gettimeofday(&end, NULL);
