@@ -3,76 +3,123 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/ip_icmp.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 
-#define PORT 8080
+unsigned short checksum(void *buffer, int length)
+{
+    unsigned short *data = buffer;
+    unsigned int sum = 0;
 
-int main() {
-    int server_fd, client_fd;
-    struct sockaddr_in address;
-    socklen_t addrlen = sizeof(address);
+    while (length > 1)
+    {
+        sum += *data++;
+        length -= 2;
+    }
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (length == 1)
+        sum += *(unsigned char *)data;
 
-    if (server_fd < 0) {
-        perror("Socket failed");
+    sum = (sum >> 16) + (sum & 0xffff);
+    sum += (sum >> 16);
+
+    return (unsigned short)(~sum);
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2)
+    {
+        printf("Usage: sudo %s <IP>\n", argv[0]);
         return 1;
     }
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    int sockfd;
 
-    if (bind(server_fd, (struct sockaddr *)&address,
-             sizeof(address)) < 0) {
-        perror("Bind failed");
+    sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
+    if (sockfd < 0)
+    {
+        perror("Socket creation failed");
         return 1;
     }
 
-    if (listen(server_fd, 5) < 0) {
-        perror("Listen failed");
+    struct sockaddr_in destination;
+
+    memset(&destination, 0, sizeof(destination));
+
+    destination.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, argv[1],
+                  &destination.sin_addr) <= 0)
+    {
+        printf("Invalid IP address\n");
         return 1;
     }
 
-    printf("Server waiting for client...\n");
+    char packet[64];
 
-    client_fd = accept(server_fd,
-                       (struct sockaddr *)&address,
-                       &addrlen);
+    memset(packet, 0, sizeof(packet));
 
-    if (client_fd < 0) {
-        perror("Accept failed");
-        return 1;
-    }
+    struct icmphdr *icmp =
+        (struct icmphdr *)packet;
 
-    printf("Client connected!\n");
+    icmp->type = ICMP_ECHO;
+    icmp->code = 0;
+
+    icmp->un.echo.id = getpid();
+    icmp->un.echo.sequence = 1;
+
+    icmp->checksum = 0;
+
+    icmp->checksum =
+        checksum(packet, sizeof(packet));
+
+    struct timeval start, end;
+
+    gettimeofday(&start, NULL);
+
+    sendto(sockfd,
+           packet,
+           sizeof(packet),
+           0,
+           (struct sockaddr *)&destination,
+           sizeof(destination));
+
+    printf("PING %s\n", argv[1]);
 
     char buffer[1024];
 
-    while (1) {
-        memset(buffer, 0, sizeof(buffer));
+    socklen_t address_length =
+        sizeof(destination);
 
-        int n = recv(client_fd, buffer,
-                     sizeof(buffer) - 1, 0);
+    int bytes = recvfrom(sockfd,
+                         buffer,
+                         sizeof(buffer),
+                         0,
+                         (struct sockaddr *)&destination,
+                         &address_length);
 
-        if (n <= 0)
-            break;
-
-        printf("Received: %s\n", buffer);
-
-        char ack[100];
-
-        sprintf(ack, "ACK %s", buffer);
-
-        send(client_fd, ack, strlen(ack), 0);
-
-        printf("Sent: %s\n", ack);
-
-        if (strcmp(buffer, "Frame 4") == 0)
-            break;
+    if (bytes < 0)
+    {
+        perror("Receive failed");
+        close(sockfd);
+        return 1;
     }
 
-    close(client_fd);
-    close(server_fd);
+    gettimeofday(&end, NULL);
+
+    double time_ms =
+        (end.tv_sec - start.tv_sec) * 1000.0 +
+        (end.tv_usec - start.tv_usec) / 1000.0;
+
+    printf("%d bytes received\n", bytes);
+
+    printf("Reply from %s: time=%.3f ms\n",
+           argv[1], time_ms);
+
+    close(sockfd);
 
     return 0;
 }
